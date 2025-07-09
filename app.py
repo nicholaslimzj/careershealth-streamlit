@@ -19,9 +19,36 @@ from google.auth import default
 from google.auth.transport.requests import Request
 from google.oauth2 import service_account
 import json
+import streamlit_authenticator as stauth
 
 # Load environment variables
 load_dotenv()
+
+# Authentication setup
+def setup_authentication():
+    """Setup authentication with username and password from environment variables"""
+    username = os.getenv('APP_USERNAME', 'admin')
+    password = os.getenv('APP_PASSWORD', 'password123')
+    
+    # Create credentials dictionary in the new format
+    credentials = {
+        'usernames': {
+            username: {
+                'name': 'Admin',
+                'password': password
+            }
+        }
+    }
+    
+    # Create authenticator
+    authenticator = stauth.Authenticate(
+        credentials,
+        'career_health_dashboard',
+        'auth_key',
+        cookie_expiry_days=30
+    )
+    
+    return authenticator
 
 # Page configuration
 st.set_page_config(
@@ -165,12 +192,28 @@ def format_number(value):
         return f"{value:,}"
 
 def main():
-    # Header with logo
-    col_logo, col_title = st.columns([1, 8])
-    with col_logo:
-        st.markdown('<img src="/app/static/images/career-health-logo.png" width="120" style="display: block; margin: auto;">', unsafe_allow_html=True)
-    with col_title:
-        st.markdown('<h1 class="main-header">Analytics Dashboard</h1>', unsafe_allow_html=True)
+    # Authentication
+    authenticator = setup_authentication()
+    authenticator.login()
+    authentication_status = st.session_state.get("authentication_status")
+    username = st.session_state.get("username")
+    name = st.session_state.get("name")
+    
+    if authentication_status == False:
+        st.error('Username/password is incorrect')
+        return
+    elif authentication_status == None:
+        st.warning('Please enter your username and password')
+        return
+    elif authentication_status:
+        # Reset data fetch state after login to ensure auto-load
+        st.session_state.has_fetched = False
+        # Header with logo
+        col_logo, col_title = st.columns([1, 8])
+        with col_logo:
+            st.markdown('<img src="/app/static/images/career-health-logo.png" width="120" style="display: block; margin: auto;">', unsafe_allow_html=True)
+        with col_title:
+            st.markdown('<h1 class="main-header">Analytics Dashboard</h1>', unsafe_allow_html=True)
 
     # Sidebar configuration
     with st.sidebar:
@@ -388,6 +431,11 @@ def main():
                     st.dataframe(df_sources, use_container_width=True)
             else:
                 st.error("❌ No data returned from Google Analytics. Please check your property ID and credentials.")
+        
+        # Add logout button in sidebar
+        with st.sidebar:
+            st.divider()
+            authenticator.logout('Logout', 'sidebar')
 
 if __name__ == "__main__":
     main() 
