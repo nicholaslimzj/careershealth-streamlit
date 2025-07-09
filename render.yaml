@@ -13,7 +13,4 @@ services:
         description: "Your Google Service Account JSON credentials (as a single line)"
         required: true
         isSecret: true
-      - key: APP_PASSWORD
-        description: "Password to protect your dashboard (optional - leave empty for no protection)"
-        required: false
-        isSecret: true 
+ 

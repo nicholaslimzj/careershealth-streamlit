@@ -2,8 +2,9 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-from datetime import datetime, timedelta
+from datetime import datetime as dt, timedelta
 import os
+import time
 from dotenv import load_dotenv
 from google.analytics.data_v1beta import BetaAnalyticsDataClient
 from google.analytics.data_v1beta.types import (
@@ -30,6 +31,18 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# Hide the deploy button and menu
+st.markdown("""
+<style>
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    .stDeployButton {display: none;}
+    /* Ensure sidebar is always visible */
+    .css-1d391kg {display: block !important;}
+    .css-1lcbmhc {display: block !important;}
+</style>
+""", unsafe_allow_html=True)
+
 # Custom CSS for better styling
 st.markdown("""
 <style>
@@ -45,6 +58,12 @@ st.markdown("""
         padding: 1rem;
         border-radius: 0.5rem;
         border-left: 4px solid #1f77b4;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        transition: transform 0.2s ease;
+    }
+    .metric-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 8px rgba(0,0,0,0.15);
     }
     .metric-value {
         font-size: 2rem;
@@ -55,6 +74,39 @@ st.markdown("""
         font-size: 0.9rem;
         color: #666;
         margin-top: 0.5rem;
+    }
+    .sidebar .sidebar-content {
+        background-color: #f8f9fa;
+    }
+    /* Ensure sidebar is visible */
+    section[data-testid="stSidebar"] {
+        display: block !important;
+        visibility: visible !important;
+    }
+    .css-1d391kg {
+        display: block !important;
+        visibility: visible !important;
+    }
+    .stButton > button {
+        border-radius: 8px;
+        font-weight: 500;
+    }
+    .stSelectbox > div > div {
+        border-radius: 8px;
+    }
+    .stTextInput > div > div > input {
+        border-radius: 8px;
+    }
+    .stDateInput > div > div > input {
+        border-radius: 8px;
+    }
+    .stDataFrame {
+        border-radius: 8px;
+        overflow: hidden;
+    }
+    .stPlotlyChart {
+        border-radius: 8px;
+        overflow: hidden;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -108,100 +160,60 @@ def format_number(value):
         return f"{value:,}"
 
 def main():
-    # Password protection
-    st.markdown("""
-    <style>
-        .auth-container {
-            background-color: #f0f2f6;
-            padding: 2rem;
-            border-radius: 10px;
-            text-align: center;
-            margin: 2rem auto;
-            max-width: 400px;
-        }
-        .auth-title {
-            color: #1f77b4;
-            font-size: 1.5rem;
-            margin-bottom: 1rem;
-        }
-    </style>
-    """, unsafe_allow_html=True)
-    
-    # Check if user is authenticated
-    if 'authenticated' not in st.session_state:
-        st.session_state.authenticated = False
-    
-    # Get password from environment variable (more secure than hardcoding)
-    app_password = os.getenv('APP_PASSWORD', '')
-    
-    # Only show password protection if APP_PASSWORD is set
-    if app_password and not st.session_state.authenticated:
-        st.markdown('<div class="auth-container">', unsafe_allow_html=True)
-        st.markdown('<h2 class="auth-title">🔐 Google Analytics Dashboard</h2>', unsafe_allow_html=True)
-        st.markdown('**Please enter the password to access the dashboard**')
-        
-        # Password input
-        password = st.text_input("Password", type="password", key="password_input")
-        
-        if st.button("Login", type="primary"):
-            if password == app_password:
-                st.session_state.authenticated = True
-                st.success("✅ Authentication successful!")
-                st.rerun()
-            else:
-                st.error("❌ Incorrect password. Please try again.")
-        
-        st.markdown('</div>', unsafe_allow_html=True)
-        return
-    
-    # If authenticated, show logout button in sidebar
-    if app_password and st.sidebar.button("🚪 Logout"):
-        st.session_state.authenticated = False
-        st.rerun()
-    
     # Header
     st.markdown('<h1 class="main-header">📊 Google Analytics Dashboard</h1>', unsafe_allow_html=True)
     
     # Sidebar configuration
-    st.sidebar.header("Configuration")
+    with st.sidebar:
+        st.header("Configuration")
     
-    # Property ID input
-    property_id = st.sidebar.text_input(
-        "Google Analytics Property ID",
-        value=os.getenv('GA_PROPERTY_ID', ''),
-        help="Enter your GA4 property ID (e.g., 123456789)"
-    )
+        # Property ID input
+        property_id = st.text_input(
+            "Google Analytics Property ID",
+            value=os.getenv('GA_PROPERTY_ID', ''),
+            help="Enter your GA4 property ID (e.g., 123456789)"
+        )
+        
+        # Date range selection
+        st.subheader("Date Range")
+        date_range = st.selectbox(
+            "Select Date Range",
+            ["Last 7 days", "Last 30 days", "Last 90 days", "Custom"],
+            index=1
+        )
     
-    # Date range selection
-    st.sidebar.subheader("Date Range")
-    date_range = st.sidebar.selectbox(
-        "Select Date Range",
-        ["Last 7 days", "Last 30 days", "Last 90 days", "Custom"],
-        index=1
-    )
-    
-    if date_range == "Custom":
-        col1, col2 = st.sidebar.columns(2)
-        with col1:
-            start_date = st.date_input("Start Date", value=datetime.now() - timedelta(days=30))
-        with col2:
-            end_date = st.date_input("End Date", value=datetime.now())
-    else:
-        days_map = {
-            "Last 7 days": 7,
-            "Last 30 days": 30,
-            "Last 90 days": 90
-        }
-        days = days_map[date_range]
-        end_date = datetime.now().date()
-        start_date = (datetime.now() - timedelta(days=days)).date()
-    
-    # Convert dates to string format for GA API
-    start_date_str = start_date.strftime('%Y-%m-%d')
-    end_date_str = end_date.strftime('%Y-%m-%d')
-    
-    # Display selected date range
-    st.sidebar.info(f"📅 Date Range: {start_date_str} to {end_date_str}")
+        if date_range == "Custom":
+            col1, col2 = st.columns(2)
+            with col1:
+                start_date = st.date_input("Start Date", value=dt.now() - timedelta(days=30))
+            with col2:
+                end_date = st.date_input("End Date", value=dt.now())
+        else:
+            days_map = {
+                "Last 7 days": 7,
+                "Last 30 days": 30,
+                "Last 90 days": 90
+            }
+            days = days_map[date_range]
+            end_date = dt.now().date()
+            start_date = (dt.now() - timedelta(days=days)).date()
+        
+        # Convert dates to string format for GA API
+        start_date_str = start_date.strftime('%Y-%m-%d')
+        end_date_str = end_date.strftime('%Y-%m-%d')
+        
+        # Display selected date range
+        st.info(f"📅 Date Range: {start_date_str} to {end_date_str}")
+        
+        # Auto-refresh configuration
+        st.subheader("Auto Refresh")
+        auto_refresh = st.checkbox("Enable Auto Refresh", value=False)
+        refresh_interval = st.selectbox(
+            "Refresh Interval",
+            ["30 seconds", "1 minute", "5 minutes", "15 minutes", "30 minutes"],
+            index=1,
+            disabled=not auto_refresh
+        )
     
     # Initialize GA client
     if not property_id:
@@ -220,9 +232,67 @@ def main():
         st.error("❌ Failed to initialize Google Analytics client. Please check your credentials.")
         return
     
-    # Main dashboard
-    if st.button("🔄 Refresh Data", type="primary"):
+
+    
+    # Convert interval to seconds
+    interval_map = {
+        "30 seconds": 30,
+        "1 minute": 60,
+        "5 minutes": 300,
+        "15 minutes": 900,
+        "30 minutes": 1800
+    }
+    
+    # Auto-refresh logic
+    if auto_refresh:
+        # Show countdown and status
+        current_time = time.time()
+        if 'last_refresh' not in st.session_state:
+            st.session_state.last_refresh = current_time
+        
+        time_since_refresh = current_time - st.session_state.last_refresh
+        time_until_next = interval_map[refresh_interval] - time_since_refresh
+        
+        if time_until_next > 0:
+            minutes = int(time_until_next // 60)
+            seconds = int(time_until_next % 60)
+            st.info(f"🔄 Auto-refresh in {minutes}m {seconds}s")
+        
+        # Set up auto-refresh using st.experimental_rerun
+        if time_since_refresh >= interval_map[refresh_interval]:
+            st.session_state.last_refresh = current_time
+            st.experimental_rerun()
+    
+    # Add JavaScript for better auto-refresh (works with Streamlit's rerun)
+    if auto_refresh:
+        st.markdown(f"""
+        <script>
+            // Auto-refresh every {interval_map[refresh_interval]} seconds
+            setTimeout(function() {{
+                window.location.reload();
+            }}, {interval_map[refresh_interval] * 1000});
+        </script>
+        """, unsafe_allow_html=True)
+    
+    # Manual refresh button
+    col1, col2 = st.columns([1, 3])
+    with col1:
+        refresh_clicked = st.button("🔄 Refresh Data", type="primary")
+    
+    with col2:
+        if auto_refresh:
+            st.info("📊 Auto-refresh enabled")
+    
+    # Main dashboard logic
+    if refresh_clicked or (auto_refresh and 'last_refresh' not in st.session_state):
         with st.spinner("Fetching data from Google Analytics..."):
+            # Update last refresh time
+            st.session_state.last_refresh = time.time()
+            
+            # Show last updated timestamp
+            last_updated = dt.now().strftime("%Y-%m-%d %H:%M:%S")
+            with st.sidebar:
+                st.success(f"📅 Last updated: {last_updated}")
             # Basic metrics
             basic_metrics = [
                 Metric(name="totalUsers"),
@@ -445,8 +515,8 @@ def main():
             else:
                 st.error("❌ No data returned from Google Analytics. Please check your property ID and credentials.")
     
-    # Setup instructions
-    with st.expander("🔧 Setup Instructions"):
+    # Help section (collapsed by default)
+    with st.expander("🔧 Help & Setup Instructions", expanded=False):
         st.markdown("""
         ### Google Analytics Setup
         
@@ -472,6 +542,12 @@ def main():
            - Connect your GitHub repository
            - Set build command: `pip install -r requirements.txt`
            - Set start command: `streamlit run app.py --server.port $PORT --server.address 0.0.0.0`
+        
+        ### Troubleshooting
+        
+        - **No data returned**: Check your Property ID and service account permissions
+        - **Authentication errors**: Verify your JSON credentials are correct
+        - **Build fails**: Ensure all dependencies are in requirements.txt
         """)
 
 if __name__ == "__main__":
