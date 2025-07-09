@@ -13,7 +13,8 @@ from google.analytics.data_v1beta.types import (
     Metric,
     RunReportRequest,
     Filter,
-    FilterExpression
+    FilterExpression,
+    FilterExpressionList
 )
 from google.auth import default
 from google.auth.transport.requests import Request
@@ -166,16 +167,41 @@ def initialize_ga_client():
         return None
 
 def get_ga_data(client, property_id, start_date, end_date, dimensions=None, metrics=None, row_limit=10):
-    """Fetch data from Google Analytics"""
+    """Fetch data from Google Analytics, filtered by production hostnames"""
     try:
+        # Filter for both 'careerhealth.sg' and 'www.careerhealth.sg'
+        hostname_filter = FilterExpression(
+            or_group=FilterExpressionList(
+                expressions=[
+                    FilterExpression(
+                        filter=Filter(
+                            field_name="hostname",
+                            string_filter=Filter.StringFilter(
+                                value="careerhealth.sg",
+                                match_type=Filter.StringFilter.MatchType.EXACT
+                            )
+                        )
+                    ),
+                    FilterExpression(
+                        filter=Filter(
+                            field_name="hostname",
+                            string_filter=Filter.StringFilter(
+                                value="www.careerhealth.sg",
+                                match_type=Filter.StringFilter.MatchType.EXACT
+                            )
+                        )
+                    )
+                ]
+            )
+        )
         request = RunReportRequest(
             property=f"properties/{property_id}",
             date_ranges=[DateRange(start_date=start_date, end_date=end_date)],
             dimensions=dimensions or [],
             metrics=metrics or [],
-            limit=row_limit
+            limit=row_limit,
+            dimension_filter=hostname_filter
         )
-        
         response = client.run_report(request)
         return response
     except Exception as e:
@@ -190,6 +216,27 @@ def format_number(value):
         return f"{value/1000:.1f}K"
     else:
         return f"{value:,}"
+
+def pretty_source_label(source, medium):
+    if source == "(direct)" and medium == "(none)":
+        return "Direct"
+    if source == "(not set)" and medium == "(not set)":
+        return "Unknown"
+    if medium == "referral":
+        return f"{source.split('.')[0].capitalize()} (Link)"
+    if medium == "email":
+        return "Email"
+    if medium == "youtube":
+        return "YouTube"
+    if medium == "cpc":
+        return f"{source.capitalize()} (Paid Search)"
+    if medium == "organic":
+        return f"{source.capitalize()} (Organic Search)"
+    if medium == "paid_social":
+        return f"{source.capitalize()} (Paid Social)"
+    if medium == "social":
+        return f"{source.capitalize()} (Social)"
+    return f"{source.capitalize()} ({medium.capitalize()})"
 
 def main():
     # Authentication
@@ -408,32 +455,30 @@ def main():
                     
                     # Traffic sources
                     st.subheader("🌐 Traffic Sources")
-                    
                     sources_response = get_ga_data(
                         client, ga_property_id, start_date_str, end_date_str,
-                        dimensions=[Dimension(name="sessionDefaultChannelGrouping")],
+                        dimensions=[Dimension(name="sessionSource"), Dimension(name="sessionMedium")],
                         metrics=[Metric(name="sessions"), Metric(name="totalUsers")],
-                        row_limit=10
+                        row_limit=50
                     )
-                    
                     if sources_response and sources_response.rows:
                         sources_data = []
                         for row in sources_response.rows:
+                            source = row.dimension_values[0].value
+                            medium = row.dimension_values[1].value
+                            sessions = int(row.metric_values[0].value)
+                            users = int(row.metric_values[1].value)
+                            label = pretty_source_label(source, medium)
                             sources_data.append({
-                                'Source': row.dimension_values[0].value,
-                                'Sessions': int(row.metric_values[0].value),
-                                'Users': int(row.metric_values[1].value)
+                                "Source": label,
+                                "Sessions": sessions,
+                                "Users": users
                             })
-                        
                         df_sources = pd.DataFrame(sources_data)
-                        
-                        # Create pie chart for traffic sources
                         fig = px.pie(df_sources, values='Sessions', names='Source',
                                     title='Traffic by Source')
                         fig.update_layout(height=400)
                         st.plotly_chart(fig, use_container_width=True)
-                        
-                        # Display as table
                         st.dataframe(df_sources, use_container_width=True)
                 else:
                     st.error("❌ No data returned from Google Analytics. Please check your property ID and credentials.")
