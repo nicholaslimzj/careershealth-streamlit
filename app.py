@@ -25,7 +25,7 @@ load_dotenv()
 
 # Page configuration
 st.set_page_config(
-    page_title="Google Analytics Dashboard",
+    page_title="Career Health SG - Analytics Dashboard",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -64,6 +64,11 @@ st.markdown("""
     .metric-card:hover {
         transform: translateY(-2px);
         box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+    }
+    @media (max-width: 600px) {
+        .metric-card {
+            margin-bottom: 1rem;
+        }
     }
     .metric-value {
         font-size: 2rem;
@@ -160,34 +165,34 @@ def format_number(value):
         return f"{value:,}"
 
 def main():
-    # Header
-    st.markdown('<h1 class="main-header">📊 Google Analytics Dashboard</h1>', unsafe_allow_html=True)
-    
+    # Header with logo
+    col_logo, col_title = st.columns([1, 8])
+    with col_logo:
+        st.markdown('<img src="/app/static/images/career-health-logo.png" width="120" style="display: block; margin: auto;">', unsafe_allow_html=True)
+    with col_title:
+        st.markdown('<h1 class="main-header">Analytics Dashboard</h1>', unsafe_allow_html=True)
+
     # Sidebar configuration
     with st.sidebar:
-        st.header("Configuration")
-    
-        # Property ID input
-        property_id = st.text_input(
-            "Google Analytics Property ID",
-            value=os.getenv('GA_PROPERTY_ID', ''),
-            help="Enter your GA4 property ID (e.g., 123456789)"
-        )
-        
-        # Date range selection
+        ga_property_id = os.getenv('GA_PROPERTY_ID', '')
         st.subheader("Date Range")
         date_range = st.selectbox(
             "Select Date Range",
             ["Last 7 days", "Last 30 days", "Last 90 days", "Custom"],
             index=1
         )
-    
         if date_range == "Custom":
-            col1, col2 = st.columns(2)
-            with col1:
-                start_date = st.date_input("Start Date", value=dt.now() - timedelta(days=30))
-            with col2:
-                end_date = st.date_input("End Date", value=dt.now())
+            default_start = dt.now().date()
+            default_end = dt.now().date()
+            picked_range = st.date_input(
+                "Select Date Range",
+                value=(default_start, default_end)
+            )
+            if isinstance(picked_range, tuple) and len(picked_range) == 2:
+                start_date, end_date = picked_range
+            else:
+                start_date = default_start
+                end_date = default_end
         else:
             days_map = {
                 "Last 7 days": 7,
@@ -197,34 +202,25 @@ def main():
             days = days_map[date_range]
             end_date = dt.now().date()
             start_date = (dt.now() - timedelta(days=days)).date()
-        
-        # Convert dates to string format for GA API
         start_date_str = start_date.strftime('%Y-%m-%d')
         end_date_str = end_date.strftime('%Y-%m-%d')
-        
-        # Display selected date range
         st.info(f"📅 Date Range: {start_date_str} to {end_date_str}")
-        
-        # Auto-refresh configuration
-        st.subheader("Auto Refresh")
-        auto_refresh = st.checkbox("Enable Auto Refresh", value=False)
-        refresh_interval = st.selectbox(
-            "Refresh Interval",
-            ["30 seconds", "1 minute", "5 minutes", "15 minutes", "30 minutes"],
-            index=1,
-            disabled=not auto_refresh
-        )
+    
+    # Track last used date range in session state
+    current_date_key = f"{start_date_str}_{end_date_str}"
+    if 'last_date_key' not in st.session_state:
+        st.session_state.last_date_key = current_date_key
+    if st.session_state.last_date_key != current_date_key:
+        st.session_state.has_fetched = False
+        st.session_state.last_date_key = current_date_key
+
+    # Ensure session state variable is initialized
+    if 'has_fetched' not in st.session_state:
+        st.session_state.has_fetched = False
     
     # Initialize GA client
-    if not property_id:
+    if not ga_property_id:
         st.warning("⚠️ Please enter your Google Analytics Property ID in the sidebar to get started.")
-        st.info("""
-        **Setup Instructions:**
-        1. Get your GA4 Property ID from Google Analytics
-        2. Set up a service account and download credentials
-        3. Add credentials to environment variables
-        4. Deploy to Render.com
-        """)
         return
     
     client = initialize_ga_client()
@@ -232,67 +228,14 @@ def main():
         st.error("❌ Failed to initialize Google Analytics client. Please check your credentials.")
         return
     
-
-    
-    # Convert interval to seconds
-    interval_map = {
-        "30 seconds": 30,
-        "1 minute": 60,
-        "5 minutes": 300,
-        "15 minutes": 900,
-        "30 minutes": 1800
-    }
-    
-    # Auto-refresh logic
-    if auto_refresh:
-        # Show countdown and status
-        current_time = time.time()
-        if 'last_refresh' not in st.session_state:
-            st.session_state.last_refresh = current_time
-        
-        time_since_refresh = current_time - st.session_state.last_refresh
-        time_until_next = interval_map[refresh_interval] - time_since_refresh
-        
-        if time_until_next > 0:
-            minutes = int(time_until_next // 60)
-            seconds = int(time_until_next % 60)
-            st.info(f"🔄 Auto-refresh in {minutes}m {seconds}s")
-        
-        # Set up auto-refresh using st.experimental_rerun
-        if time_since_refresh >= interval_map[refresh_interval]:
-            st.session_state.last_refresh = current_time
-            st.experimental_rerun()
-    
-    # Add JavaScript for better auto-refresh (works with Streamlit's rerun)
-    if auto_refresh:
-        st.markdown(f"""
-        <script>
-            // Auto-refresh every {interval_map[refresh_interval]} seconds
-            setTimeout(function() {{
-                window.location.reload();
-            }}, {interval_map[refresh_interval] * 1000});
-        </script>
-        """, unsafe_allow_html=True)
-    
-    # Manual refresh button
-    col1, col2 = st.columns([1, 3])
-    with col1:
-        refresh_clicked = st.button("🔄 Refresh Data", type="primary")
-    
-    with col2:
-        if auto_refresh:
-            st.info("📊 Auto-refresh enabled")
+    # Manual refresh button (hidden)
+    refresh_clicked = False
     
     # Main dashboard logic
-    if refresh_clicked or (auto_refresh and 'last_refresh' not in st.session_state):
+    if not st.session_state.has_fetched or refresh_clicked:
         with st.spinner("Fetching data from Google Analytics..."):
-            # Update last refresh time
+            st.session_state.has_fetched = True
             st.session_state.last_refresh = time.time()
-            
-            # Show last updated timestamp
-            last_updated = dt.now().strftime("%Y-%m-%d %H:%M:%S")
-            with st.sidebar:
-                st.success(f"📅 Last updated: {last_updated}")
             # Basic metrics
             basic_metrics = [
                 Metric(name="totalUsers"),
@@ -303,7 +246,7 @@ def main():
             ]
             
             basic_response = get_ga_data(
-                client, property_id, start_date_str, end_date_str,
+                client, ga_property_id, start_date_str, end_date_str,
                 metrics=basic_metrics
             )
             
@@ -363,7 +306,7 @@ def main():
                 st.subheader("📈 Traffic Over Time")
                 
                 time_series_response = get_ga_data(
-                    client, property_id, start_date_str, end_date_str,
+                    client, ga_property_id, start_date_str, end_date_str,
                     dimensions=[Dimension(name="date")],
                     metrics=[Metric(name="totalUsers"), Metric(name="sessions")],
                     row_limit=100
@@ -396,7 +339,7 @@ def main():
                 st.subheader("📄 Top Pages")
                 
                 pages_response = get_ga_data(
-                    client, property_id, start_date_str, end_date_str,
+                    client, ga_property_id, start_date_str, end_date_str,
                     dimensions=[Dimension(name="pagePath")],
                     metrics=[Metric(name="screenPageViews"), Metric(name="totalUsers")],
                     row_limit=10
@@ -418,7 +361,7 @@ def main():
                 st.subheader("🌐 Traffic Sources")
                 
                 sources_response = get_ga_data(
-                    client, property_id, start_date_str, end_date_str,
+                    client, ga_property_id, start_date_str, end_date_str,
                     dimensions=[Dimension(name="sessionDefaultChannelGrouping")],
                     metrics=[Metric(name="sessions"), Metric(name="totalUsers")],
                     row_limit=10
@@ -443,112 +386,8 @@ def main():
                     
                     # Display as table
                     st.dataframe(df_sources, use_container_width=True)
-                
-                # Page drop-off analysis
-                st.subheader("📉 Page Drop-off Analysis")
-                
-                # Get pages with exit rate data
-                dropoff_response = get_ga_data(
-                    client, property_id, start_date_str, end_date_str,
-                    dimensions=[Dimension(name="pagePath")],
-                    metrics=[
-                        Metric(name="screenPageViews"),
-                        Metric(name="totalUsers"),
-                        Metric(name="exits"),
-                        Metric(name="sessions")
-                    ],
-                    row_limit=15
-                )
-                
-                if dropoff_response and dropoff_response.rows:
-                    dropoff_data = []
-                    for row in dropoff_response.rows:
-                        page_views = int(row.metric_values[0].value)
-                        users = int(row.metric_values[1].value)
-                        exits = int(row.metric_values[2].value)
-                        sessions = int(row.metric_values[3].value)
-                        
-                        # Calculate exit rate (drop-off rate)
-                        exit_rate = (exits / page_views * 100) if page_views > 0 else 0
-                        
-                        dropoff_data.append({
-                            'Page': row.dimension_values[0].value,
-                            'Page Views': page_views,
-                            'Users': users,
-                            'Exits': exits,
-                            'Exit Rate (%)': round(exit_rate, 1),
-                            'Sessions': sessions
-                        })
-                    
-                    df_dropoff = pd.DataFrame(dropoff_data)
-                    
-                    # Sort by exit rate (highest drop-off first)
-                    df_dropoff = df_dropoff.sort_values('Exit Rate (%)', ascending=False)
-                    
-                    # Create bar chart for exit rates
-                    fig = px.bar(df_dropoff.head(10), x='Exit Rate (%)', y='Page',
-                                title='Top 10 Pages by Exit Rate (Drop-off)',
-                                orientation='h',
-                                color='Exit Rate (%)',
-                                color_continuous_scale='Reds')
-                    fig.update_layout(height=500, yaxis={'categoryorder':'total ascending'})
-                    st.plotly_chart(fig, use_container_width=True)
-                    
-                    # Display detailed table
-                    st.dataframe(df_dropoff, use_container_width=True)
-                    
-                    # Summary insights
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        avg_exit_rate = df_dropoff['Exit Rate (%)'].mean()
-                        st.metric("Average Exit Rate", f"{avg_exit_rate:.1f}%")
-                    
-                    with col2:
-                        highest_exit = df_dropoff.iloc[0]
-                        st.metric("Highest Exit Rate", f"{highest_exit['Exit Rate (%)']:.1f}%", 
-                                f"on {highest_exit['Page'][:30]}...")
-                    
-                    with col3:
-                        lowest_exit = df_dropoff.iloc[-1]
-                        st.metric("Lowest Exit Rate", f"{lowest_exit['Exit Rate (%)']:.1f}%",
-                                f"on {lowest_exit['Page'][:30]}...")
             else:
                 st.error("❌ No data returned from Google Analytics. Please check your property ID and credentials.")
-    
-    # Help section (collapsed by default)
-    with st.expander("🔧 Help & Setup Instructions", expanded=False):
-        st.markdown("""
-        ### Google Analytics Setup
-        
-        1. **Create a Google Analytics 4 Property** (if you haven't already)
-        2. **Set up a Service Account:**
-           - Go to [Google Cloud Console](https://console.cloud.google.com/)
-           - Create a new project or select existing one
-           - Enable Google Analytics Data API
-           - Create a service account
-           - Download the JSON credentials file
-        
-        3. **Add Service Account to GA4:**
-           - Go to your GA4 property settings
-           - Add the service account email as a user with Viewer permissions
-        
-        4. **Environment Variables for Render.com:**
-           ```
-           GOOGLE_APPLICATION_CREDENTIALS_JSON={"type": "service_account", ...}
-           GA_PROPERTY_ID=your_property_id_here
-           ```
-        
-        5. **Deploy to Render.com:**
-           - Connect your GitHub repository
-           - Set build command: `pip install -r requirements.txt`
-           - Set start command: `streamlit run app.py --server.port $PORT --server.address 0.0.0.0`
-        
-        ### Troubleshooting
-        
-        - **No data returned**: Check your Property ID and service account permissions
-        - **Authentication errors**: Verify your JSON credentials are correct
-        - **Build fails**: Ensure all dependencies are in requirements.txt
-        """)
 
 if __name__ == "__main__":
     main() 
